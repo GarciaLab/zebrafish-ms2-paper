@@ -21,8 +21,8 @@ def simulate(p=None):
     t = 0
     tvec = np.array([t])
     lots_of_random_numbers = np.random.rand(int(p.number_of_random_numbers_to_pregenerate))
-    random_number_counter = 0
 
+    random_number_counter = 0
     while t < p.Tmax:
         if random_number_counter < p.number_of_random_numbers_to_pregenerate:
             this_random_number = lots_of_random_numbers[random_number_counter]
@@ -94,12 +94,23 @@ def update(state, mrna, protein, p, tvec, t, this_random_number):
     state_addition = current_state * np.ones(num_new_time_points + 1)
     state_addition[0] = current_state
 
+    # gaussian random numbers
+    these_gaussian_numbers = np.random.normal(size=(num_new_time_points, 2))
+        
     # Euler integrate up to t + delta_t
     for s in range(1, num_new_time_points + 1):
-        mrna_addition[s] = mrna_addition[s - 1] + dt * (
-                (p.transcription_rate_0 + p.transcription_rate_1 * hill_function(repressing_protein, p.KD, p.n)) *  state_addition[s - 1] - p.mrna_decay_rate * mrna_addition[s - 1])
-        protein_addition[s] = protein_addition[s - 1] + dt * (
-                p.translation_rate * mrna_addition[s - 1] - p.protein_decay_rate * protein_addition[s - 1])
+        mrna_addition[s] = mrna_addition[s - 1] + (dt * (
+                (p.transcription_rate_0 + p.transcription_rate_1 * hill_function(repressing_protein, p.KD, p.n)) *  state_addition[s - 1] - p.mrna_decay_rate * mrna_addition[s - 1]) + np.sqrt(dt) * p.noise_strength * np.sqrt(p.transcription_rate_0 + p.transcription_rate_1 * hill_function(repressing_protein, p.KD, p.n) *  state_addition[s - 1] + p.mrna_decay_rate * mrna_addition[s - 1]) * these_gaussian_numbers[s - 1, 0]
+                )
+
+        protein_addition[s] = protein_addition[s - 1] + (dt * (
+                p.translation_rate * mrna_addition[s - 1] - p.protein_decay_rate * protein_addition[s - 1]) + np.sqrt(dt) * p.noise_strength * np.sqrt(p.translation_rate * mrna_addition[s - 1] + p.protein_decay_rate * protein_addition[s - 1]) * these_gaussian_numbers[s - 1, 1]
+                )
+
+        if mrna_addition[s] < 0:
+            mrna_addition[s] = 0
+        if protein_addition[s] < 0:
+            protein_addition[s] = 0
 
     """3. correct last state time point to reflect stochastic switch"""
     if delta_t < p.max_time_to_next_reaction:
@@ -170,6 +181,7 @@ class Params:
         self.KD = 10.0
         self.n = 2.0
         self.delay = 0.0
+        self.noise_strength = 0.0
         
         
 def peak_intervals(trace, tvec=None, prominence=0.25):
