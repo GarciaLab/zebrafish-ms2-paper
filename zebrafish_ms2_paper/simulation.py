@@ -81,7 +81,8 @@ def update(state, mrna, protein, p, tvec, t, this_random_number):
     # create arrays for the new time points
     tvec_addition = np.arange(t + dt, t + delta_t + dt, dt)
     num_new_time_points = len(tvec_addition)
-    
+    tvec = np.append(tvec, tvec_addition)
+
     # new mrna values
     mrna_addition = np.zeros(num_new_time_points + 1)
     mrna_addition[0] = current_mrna
@@ -95,12 +96,21 @@ def update(state, mrna, protein, p, tvec, t, this_random_number):
     state_addition[0] = current_state
 
     # gaussian random numbers
-    these_gaussian_numbers = np.random.normal(size=(num_new_time_points, 2))
+    if p.noise_strength > 0:
+        these_gaussian_numbers = np.random.normal(size=(num_new_time_points, 2))
+    else:
+        these_gaussian_numbers = np.zeros((num_new_time_points, 2))
         
     # Euler integrate up to t + delta_t
     for s in range(1, num_new_time_points + 1):
+        if p.delay > 0:
+            delayed_id = compute_delayed_id(p.delay, tvec, tvec_addition[s-1])
+            repressing_protein = protein[delayed_id]
+        else:
+            repressing_protein = current_protein
+            
         mrna_addition[s] = mrna_addition[s - 1] + (dt * (
-                (p.transcription_rate_0 + p.transcription_rate_1 * hill_function(repressing_protein, p.KD, p.n)) *  state_addition[s - 1] - p.mrna_decay_rate * mrna_addition[s - 1]) + np.sqrt(dt) * p.noise_strength * np.sqrt(p.transcription_rate_0 + p.transcription_rate_1 * hill_function(repressing_protein, p.KD, p.n) *  state_addition[s - 1] + p.mrna_decay_rate * mrna_addition[s - 1]) * these_gaussian_numbers[s - 1, 0]
+                (p.transcription_rate_0 + p.transcription_rate_1 * hill_function(repressing_protein, p.KD, p.n)) *  state_addition[s - 1] - p.mrna_decay_rate * mrna_addition[s - 1]) + np.sqrt(dt) * p.noise_strength * np.sqrt((p.transcription_rate_0 + p.transcription_rate_1 * hill_function(repressing_protein, p.KD, p.n)) *  state_addition[s - 1] + p.mrna_decay_rate * mrna_addition[s - 1]) * these_gaussian_numbers[s - 1, 0]
                 )
 
         protein_addition[s] = protein_addition[s - 1] + (dt * (
@@ -122,7 +132,6 @@ def update(state, mrna, protein, p, tvec, t, this_random_number):
  
     """collect output and prepare to return"""
     # append the new values to the main arrays
-    tvec = np.append(tvec, tvec_addition)
     state = np.append(state, state_addition[1:])
     mrna = np.append(mrna, mrna_addition[1:])
     protein = np.append(protein, protein_addition[1:])
@@ -196,14 +205,17 @@ def peak_intervals(trace, tvec=None, prominence=0.25):
     return intervals    
     
 
-def sim_ms2(state, tvec, loading_rate, w, delta_t, sigma, detection_threshold):
+def sim_ms2(state, tvec, production_rate, w, delta_t, sigma, detection_threshold, conversion_factor=1.0):
     """given a sequence of promoter state values (0,1), simulate a realistic MS2 trace. Adapted from Nick Lammers' cpHMM code.
     The main idea is to include a memory kernel that adds the contributions of all polymerases that have been on the gene 
     since the last observation time.
     
-    can pass a vector of loading_rate, representing, for instance, repression by the protein for amp reg"""
-    if not isinstance(loading_rate, np.ndarray):
-        loading_rate = loading_rate * np.ones_like(state)
+    can pass a vector of production_rate, representing, for instance, repression by the protein for amp reg.
+    
+    note that for the zebrafish her1 reporter, elongation is fast enough and the sequence short enough that the memory effect is neglibile. 
+    Thus, we simplify by ignoring the fluorescence weighting by position along the sequence."""
+    if not isinstance(production_rate, np.ndarray):
+        production_rate = production_rate * np.ones_like(state)
     uniform_times = np.arange(np.min(tvec), np.max(tvec), delta_t)
     ms2 = np.zeros_like(uniform_times)
     
@@ -216,11 +228,14 @@ def sim_ms2(state, tvec, loading_rate, w, delta_t, sigma, detection_threshold):
         times_window = tvec[start_ind:end_ind] 
         state_window = state[start_ind:end_ind]
         dt_window = np.diff(times_window)
-        loading_rate_window = loading_rate[start_ind:end_ind]
+        production_rate_window = production_rate[start_ind:end_ind]
         
         # sum the contributions of all the previous times
-        ms2[i] = np.sum(loading_rate_window[1:] * state_window[1:] * dt_window)
+        ms2[i] = np.sum(production_rate_window[1:] * state_window[1:] * dt_window)
         
+    # convert from number of molecules to fluorescence a.u.
+    ms2 *= conversion_factor
+    
     # add gaussian noise
     ms2 += ms2 * np.random.normal(scale=sigma, size=len(ms2))
     
