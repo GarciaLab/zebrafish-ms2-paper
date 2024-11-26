@@ -1,3 +1,9 @@
 sandbox/*
 figures/*
 data/*
+build/*
+.idea/*
+.ipynb_checkpoints/*
+zebrafish_ms2_paper.egg-info/*
+notebooks/.ipynb_checkpoints/*
+zebrafish_ms2_paper/__pycache__/*
