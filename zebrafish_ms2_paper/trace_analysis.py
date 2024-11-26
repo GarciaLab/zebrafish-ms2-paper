@@ -5,6 +5,7 @@ import pandas as pd
 import numpy as np
 from scipy.integrate import solve_ivp
 from numpy.polynomial.polynomial import Polynomial
+from scipy.ndimage.morphology import binary_erosion
 
 
 def extract_traces(df, method='radial_dog'):
@@ -143,6 +144,7 @@ def compute_moving_average(ms2, t_arr, window_size):
 def binarize_trace(ms2, t_arr, thresh, window_size=3):
     moving_average = compute_moving_average(ms2, t_arr, window_size)
     state = moving_average >= thresh
+    state[1:-1] = binary_erosion(state, structure=np.ones(3))[1:-1]
 
     return state
 
@@ -262,6 +264,45 @@ def predict_protein_v2(ms2, t_arr, Tmax, t_eval,
     
     return mrna, protein, fp
 
+
+def predict_protein_v3(ms2, t_arr, Tmax, t_eval, 
+                       transcription_rate = 33, 
+                       mrna_decay_rate = 0.23, 
+                       translation_rate = 4.5, 
+                       protein_decay_rate = 0.23, 
+                       fp_maturation_rate = 1.0, 
+                       fp_decay_rate = 0.1):
+    
+
+
+    def mrna_production(t, ms2, t_arr):            
+        if t <= np.max(t_arr) and t >= np.min(t_arr):
+            production = np.interp(t, t_arr, ms2)
+        else:
+            production = 0
+            
+        return production
+    
+    def derivative(t, y, ms2, t_arr, transcription_rate, translation_rate, fp_maturation_rate, 
+                   mrna_decay_rate, protein_decay_rate, fp_decay_rate):
+        mrna, protein, fp = y
+    
+        mrna_derivative = transcription_rate * mrna_production(t, ms2, t_arr) - mrna_decay_rate *  mrna
+        protein_derivative = translation_rate * mrna - protein_decay_rate * protein
+        fp_derivative = fp_maturation_rate * protein - fp_decay_rate * fp
+        
+        return [mrna_derivative, protein_derivative, fp_derivative]
+    
+    sol = solve_ivp(derivative, [0, Tmax], [0, 0, 0], t_eval=t_eval, 
+                    args=(ms2, t_arr, transcription_rate, translation_rate, 
+                          fp_maturation_rate, mrna_decay_rate, protein_decay_rate, 
+                          fp_decay_rate), max_step=0.25)
+    
+    mrna, protein, fp = sol.y
+    
+    return mrna, protein, fp
+
+
 def predict_protein_for_all_nuclei(df, tracks, method='gauss3d_dog'):
     traces = extract_traces(df, method)
     protein_df = pd.DataFrame(columns=['fp', 'nucleus_id', 't', 'z', 'y', 'x'])
@@ -270,7 +311,8 @@ def predict_protein_for_all_nuclei(df, tracks, method='gauss3d_dog'):
         t_arr, ms2, nucleus_id = trace
         sub_tracks = tracks[tracks.track_id == nucleus_id]
 
-        mrna, protein, fp = predict_protein_v2(ms2, t_arr, Tmax=sub_tracks.t.max(), t_eval=sub_tracks.t)
+    
+        mrna, protein, fp = predict_protein_v3(ms2, t_arr, Tmax=sub_tracks.t.max(), t_eval=sub_tracks.t)
                  
         tmp_df = pd.DataFrame()
         tmp_df['fp'] = fp
@@ -314,7 +356,21 @@ def poly_eval(x, coefs):
     return y
     
     
+def predict_protein_from_kymograph(kymograph, t_arr, Tmax=None, t_eval=None):
+    """kymograph: time x space array"""
+    if Tmax is None:
+        Tmax = t_arr[-1]
+    if t_eval is None:
+        t_eval = t_arr
+        
+    protein_kymograph  = np.zeros_like(kymograph)
+    for i in range(kymograph.shape[1]):
+        ms2 = kymograph[:, i]
+        mrna, protein, fp = predict_protein_v2(ms2, t_arr, Tmax, t_eval)
+        protein_kymograph[:, i] = protein
     
+    return protein_kymograph
+        
     
     
     
